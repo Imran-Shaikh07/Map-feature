@@ -6,26 +6,58 @@
     <title>Vehicle servicing center
     </title>
     <script>
-        // Load the Google Maps API dynamically
-        fetch('/get-api-key')
-            .then(response => response.json())
-            .then(data => {
-                if (data.apiKey) {
-                    const script = document.createElement('script');
-                    script.src = `//maps.googleapis.com/maps/api/js?key=${data.apiKey}&libraries=places,geometry,drawing`;
-                    script.async = true;
-                    script.defer = true;
-                    script.onload = initMap;
-                    document.head.appendChild(script);
-                } else {
-                    console.error('API key not found');
-                    document.body.innerHTML = '<h1>Error: Could not load Google Maps API</h1>';
-                }
-            })
-            .catch(error => {
-                console.error('Error loading API key:', error);
-                document.body.innerHTML = '<h1>Error: Could not load Google Maps API</h1>';
-            });
+        // Load the Google Maps API dynamically with better error handling
+        function loadGoogleMapsAPI() {
+            return fetch('/get-api-key')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (!data.apiKey) {
+                        throw new Error('API key not found in response');
+                    }
+                    return new Promise((resolve, reject) => {
+                        const script = document.createElement('script');
+                        script.src = `https://maps.googleapis.com/maps/api/js?key=${data.apiKey}&libraries=places,geometry,drawing`;
+                        script.async = true;
+                        script.defer = true;
+                        script.onload = () => resolve();
+                        script.onerror = () => reject(new Error('Failed to load Google Maps script'));
+                        document.head.appendChild(script);
+                    });
+                });
+        }
+
+        // Initialize the application
+        function initializeApp() {
+            const errorDisplay = document.getElementById('error-display');
+            loadGoogleMapsAPI()
+                .then(() => {
+                    if (typeof google === 'undefined') {
+                        throw new Error('Google Maps failed to load');
+                    }
+                    initMap();
+                    if (errorDisplay) {
+                        errorDisplay.style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    console.error('Error initializing Google Maps:', error);
+                    const message = 'Error: Could not load Google Maps API. Please check your internet connection and try again.';
+                    if (errorDisplay) {
+                        errorDisplay.textContent = message;
+                        errorDisplay.style.display = 'block';
+                    } else {
+                        document.body.innerHTML = `<div class="error-message">${message}</div>`;
+                    }
+                });
+        }
+
+        // Start initialization when the page loads
+        window.addEventListener('load', initializeApp);
     </script>
     <style>
         #map {
