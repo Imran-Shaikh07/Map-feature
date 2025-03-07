@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle servicing center
+    </title>
+    <script>
+        // Load the Google Maps API dynamically
+        fetch('/get-api-key')
+            .then(response => response.json())
+            .then(data => {
+                if (data.apiKey) {
+                    const script = document.createElement('script');
+                    script.src = `//maps.googleapis.com/maps/api/js?key=${data.apiKey}&libraries=places,geometry,drawing`;
+                    script.async = true;
+                    script.defer = true;
+                    script.onload = initMap;
+                    document.head.appendChild(script);
+                } else {
+                    console.error('API key not found');
+                    document.body.innerHTML = '<h1>Error: Could not load Google Maps API</h1>';
+                }
+            })
+            .catch(error => {
+                console.error('Error loading API key:', error);
+                document.body.innerHTML = '<h1>Error: Could not load Google Maps API</h1>';
+            });
+    </script>
+    <style>
+        #map {
+            height: 500px;
+            width: 100%;
+        }
+        input, button {
+            margin: 5px;
+            padding: 8px;
+        }
+        .search-box {
+            margin-bottom: 15px;
+        }
+        .search-box input {
+            width: 70%;
+            padding: 8px;
+            margin-right: 10px;
+        }
+        .place-item {
+            border-bottom: 1px solid #ccc;
+            padding: 15px;
+            margin: 10px 0;
+            background-color: #f9f9f9;
+            border-radius: 5px;
+        }
+        .place-item strong {
+            font-size: 1.1em;
+            color: #333;
+        }
+        .place-item .address {
+            font-size: 0.9em;
+            color: #666;
+            margin: 5px 0;
+        }
+        .place-item button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            cursor: pointer;
+            border-radius: 3px;
+            margin-top: 5px;
+        }
+        .place-item button:hover {
+            background-color: #45a049;
+        }
+        #places-list {
+            max-height: 400px;
+            overflow-y: auto;
+            margin: 15px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        body {
+        background-color: #2e2e2e; /* Dark gray */
+        color: #ffffff; /* White text for better contrast */
+        font-family: Arial, sans-serif;
+    }
+        /* Add loading spinner styles */
+        .spinner {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .search-button {
+            position: relative;
+            min-width: 80px;
+        }
+        .search-button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        /* Add styles for the distance info */
+        .distance-info {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #3a3a3a;
+            border-radius: 5px;
+            font-size: 1.1em;
+        }
+        /* Add styles for directions panel */
+        #directions-panel {
+            color: #ffffff;
+            background-color: #3a3a3a;
+            padding: 15px;
+            margin-top: 20px;
+            border-radius: 5px;
+            line-height: 1.5;
+        }
+        #directions-panel div {
+            color: #ffffff !important;
+        }
+        #directions-panel .adp-directions {
+            color: #ffffff;
+        }
+        #directions-panel .adp-placemark {
+            background-color: #4a4a4a;
+            border: none;
+            margin: 10px 0;
+        }
+        #directions-panel .adp-summary {
+            color: #ffffff;
+            padding: 10px 0;
+        }
+        #directions-panel .adp-legal {
+            color: #aaaaaa;
+        }
+        #directions-panel table {
+            color: #ffffff;
+        }
+        #directions-panel .adp-text {
+            color: #ffffff;
+        }
+        /* Override any Google Maps default styles */
+        .adp, .adp table {
+            color: #ffffff !important;
+        }
+        .adp-step, .adp-substep {
+            color: #ffffff !important;
+            background-color: #3a3a3a !important;
+        }
+        /* Style for distance markers and text */
+        .adp-marker2 {
+            filter: invert(1);
+        }
+    </style>
+      
+</head>
+<body>
+    <h2>VEHICLE SERVICING CENTER </h2>
+    <div class="container">
+        <p>Your location: <span id="your-location">Loading...</span></p>
+        <div class="search-box">
+            <input type="text" id="search-input" placeholder="Search for nearby car shops, showrooms...">
+            <button id="search-button" class="search-button" onclick="searchNearbyPlaces()">Search</button>
+            <div class="spinner" id="search-spinner"></div>
+        </div>
+        
+        <div id="places-list" style="display: none; margin: 10px 0;">
+            <!-- Results will be displayed here -->
+        </div>
+
+        <div class="input-box">
+            <input type="text" id="destination" placeholder="Enter destination" readonly>
+            <button id="directions-button" onclick="getDirections()">Get Directions</button>
+            <div class="spinner" id="directions-spinner"></div>
+        </div>
+        
+        <!-- Add the missing distance display element -->
+        <div id="distance" class="distance-info"></div>
+        
+        <div id="map"></div>
+        <div id="directions-panel"></div>
+    </div>
+
+    <script>
+        let map;
+        let markers = [];
+        let directionsService;
+        let directionsRenderer;
+        let userLat, userLng;
+        let userLocation;
+        let placesService;
+        let searchInProgress = false;
+
+        function initMap() {
+            // Initialize the map with default center
+            map = new google.maps.Map(document.getElementById("map"), {
+                center: { lat: 20.5937, lng: 78.9629 },
+                zoom: 5,
+            });
+
+            // Initialize directions service and renderer
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer = new google.maps.DirectionsRenderer();
+            directionsRenderer.setMap(map);
+            directionsRenderer.setPanel(document.getElementById('directions-panel'));
+
+            // Get user's current location with better error handling
+            if (navigator.geolocation) {
+                // Show loading message
+                document.getElementById("your-location").innerText = "Requesting location access...";
+                
+                const options = {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                };
+
+                navigator.geolocation.getCurrentPosition(
+                    // Success callback
+                    function (position) {
+                        userLat = position.coords.latitude;
+                        userLng = position.coords.longitude;
+                        userLocation = new google.maps.LatLng(userLat, userLng);
+
+                        // Create marker for user's location
+                        let userMarker = new google.maps.Marker({
+                            position: userLocation,
+                            map: map,
+                            title: "Your Location",
+                            icon: {
+                                url: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png"
+                            }
+                        });
+
+                        // Center map on user's location
+                        map.setCenter(userLocation);
+                        map.setZoom(14);
+
+                        // Initialize Places service
+                        placesService = new google.maps.places.PlacesService(map);
+
+                        // Update location text
+                        const geocoder = new google.maps.Geocoder();
+                        geocoder.geocode({ location: userLocation }, (results, status) => {
+                            if (status === "OK" && results[0]) {
+                                document.getElementById("your-location").innerText = results[0].formatted_address;
+                            } else {
+                                document.getElementById("your-location").innerText = 
+                                    `Location found: ${userLat.toFixed(4)}, ${userLng.toFixed(4)}`;
+                            }
+                        });
+                    },
+                    // Error callback
+                    function (error) {
+                        console.error("Error getting location:", error);
+                        let errorMessage = "Error getting location. ";
+                        
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED:
+                                errorMessage += "Please enable location access in your browser settings.";
+                                // Show instructions for enabling location
+                                showLocationInstructions();
+                                break;
+                            case error.POSITION_UNAVAILABLE:
+                                errorMessage += "Location information is unavailable.";
+                                break;
+                            case error.TIMEOUT:
+                                errorMessage += "Location request timed out.";
+                                break;
+                            default:
+                                errorMessage += "An unknown error occurred.";
+                                break;
+                        }
+                        
+                        document.getElementById("your-location").innerHTML = errorMessage;
+                    },
+                    options
+                );
+            } else {
+                document.getElementById("your-location").innerText = 
+                    "Geolocation is not supported by this browser.";
+            }
+        }
+
+        // Add this new function to show location enabling instructions
+        function showLocationInstructions() {
+            const instructions = document.createElement('div');
+            instructions.innerHTML = `
+                <div style="margin-top: 10px; padding: 10px; background-color: #f8f9fa; border-radius: 5px;">
+                    <p><strong>How to enable location access:</strong></p>
+                    <ol>
+                        <li>Click the lock/info icon in your browser's address bar</li>
+                        <li>Find "Location" or "Site Settings"</li>
+                        <li>Change the setting to "Allow"</li>
+                        <li>Refresh the page</li>
+                    </ol>
+                    <button onclick="window.location.reload()">Refresh Page</button>
+                </div>
+            `;
+            document.getElementById("your-location").appendChild(instructions);
+        }
+
+        // Add debounce function
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        function setSearchLoading(isLoading) {
+            const button = document.getElementById('search-button');
+            const spinner = document.getElementById('search-spinner');
+            const searchInput = document.getElementById('search-input');
+            
+            button.disabled = isLoading;
+            searchInput.disabled = isLoading;
+            spinner.style.display = isLoading ? 'inline-block' : 'none';
+            button.textContent = isLoading ? 'Searching...' : 'Search';
+        }
+
+        // Update searchNearbyPlaces function
+        async function searchNearbyPlaces() {
+            if (!userLocation || searchInProgress) {
+                alert("Please wait for your location to be detected");
+                return;
+            }
+
+            const searchQuery = document.getElementById('search-input').value;
+            if (!searchQuery.trim()) {
+                alert("Please enter a search term");
+                return;
+            }
+
+            searchInProgress = true;
+            setSearchLoading(true);
+            
+            // Clear existing markers
+            markers.forEach(marker => marker.setMap(null));
+            markers = [];
+            
+            try {
+                // First try with textSearch
+                const request = {
+                    location: userLocation,
+                    radius: '5000',
+                    query: searchQuery + ' near me'
+                };
+                
+                await new Promise((resolve, reject) => {
+                    placesService.textSearch(request, (results, status) => {
+                        if (status === google.maps.places.PlacesServiceStatus.OK && results && results.length > 0) {
+                            displayResults(results);
+                            resolve();
+                        } else {
+                            // If no results, try with nearbySearch
+                            const nearbyRequest = {
+                                location: userLocation,
+                                radius: '5000',
+                                keyword: searchQuery,
+                                type: ['car_repair', 'car_dealer', 'store']
+                            };
+                            
+                            placesService.nearbySearch(nearbyRequest, (nearbyResults, nearbyStatus) => {
+                                if (nearbyStatus === google.maps.places.PlacesServiceStatus.OK && nearbyResults) {
+                                    displayResults(nearbyResults);
+                                    resolve();
+                                } else {
+                                    const placesList = document.getElementById('places-list');
+                                    placesList.innerHTML = `
+                                        <p>No results found. Try searching for terms like:</p>
+                                        <ul>
+                                            <li>car workshop near me</li>
+                                            <li>auto repair shop</li>
+                                            <li>car showroom</li>
+                                            <li>[brand name] dealer</li>
+                                        </ul>
+                                    `;
+                                    placesList.style.display = 'block';
+                                    resolve();
+                                }
+                            });
+                        }
+                    });
+                });
+            } catch (error) {
+                console.error('Search error:', error);
+                alert('An error occurred while searching. Please try again.');
+            } finally {
+                searchInProgress = false;
+                setSearchLoading(false);
+            }
+        }
+
+        function displayResults(results) {
+            const placesList = document.getElementById('places-list');
+            placesList.innerHTML = '';
+            placesList.style.display = 'block';
+            
+            results.forEach((place) => {
+                // Get additional place details
+                placesService.getDetails({
+                    placeId: place.place_id,
+                    fields: ['name', 'formatted_address', 'geometry', 'rating', 'opening_hours', 'formatted_phone_number']
+                }, (placeDetails, detailStatus) => {
+                    if (detailStatus === google.maps.places.PlacesServiceStatus.OK) {
+                        // Create marker
+                        const marker = new google.maps.Marker({
+                            map: map,
+                            position: place.geometry.location,
+                            title: place.name,
+                            icon: {
+                                url: "https://maps.google.com/mapfiles/ms/icons/red-dot.png"
+                            }
+                        });
+                        markers.push(marker);
+
+                        // Add info window
+                        const infoWindow = new google.maps.InfoWindow({
+                            content: `
+                                <div style="max-width: 300px;">
+                                    <h3>${place.name}</h3>
+                                    <p>${placeDetails.formatted_address || place.vicinity}</p>
+                                    ${placeDetails.formatted_phone_number ? `<p>📞 ${placeDetails.formatted_phone_number}</p>` : ''}
+                                    ${place.rating ? `<p>⭐ ${place.rating} (${place.user_ratings_total} reviews)</p>` : ''}
+                                    ${placeDetails.opening_hours ? 
+                                        `<p style="color: ${placeDetails.opening_hours.isOpen() ? 'green' : 'red'}">
+                                            ${placeDetails.opening_hours.isOpen() ? '✓ Open now' : '✗ Closed'}
+                                        </p>` : ''
+                                    }
+                                </div>
+                            `
+                        });
+
+                        marker.addListener('click', () => {
+                            markers.forEach(m => m.infoWindow?.close());
+                            infoWindow.open(map, marker);
+                            selectPlace(placeDetails.formatted_address || place.vicinity);
+                        });
+                        
+                        marker.infoWindow = infoWindow;
+
+                        // Create list item
+                        const placeItem = document.createElement('div');
+                        placeItem.className = 'place-item';
+                        placeItem.innerHTML = `
+                            <p><strong>${place.name}</strong></p>
+                            <p class="address">${placeDetails.formatted_address || place.vicinity}</p>
+                            ${placeDetails.formatted_phone_number ? `<p>📞 ${placeDetails.formatted_phone_number}</p>` : ''}
+                            ${place.rating ? `<p>⭐ ${place.rating} (${place.user_ratings_total} reviews)</p>` : ''}
+                            ${placeDetails.opening_hours ? 
+                                `<p style="color: ${placeDetails.opening_hours.isOpen() ? 'green' : 'red'}">
+                                    ${placeDetails.opening_hours.isOpen() ? '✓ Open now' : '✗ Closed'}
+                                </p>` : ''
+                            }
+                            <button onclick="selectPlace('${(placeDetails.formatted_address || place.vicinity).replace(/'/g, "\\'")}')">
+                                Select
+                            </button>
+                        `;
+                        placesList.appendChild(placeItem);
+                    }
+                });
+            });
+
+            // Adjust map bounds
+            const bounds = new google.maps.LatLngBounds();
+            bounds.extend(userLocation);
+            results.forEach(place => bounds.extend(place.geometry.location));
+            map.fitBounds(bounds);
+        }
+
+        function selectPlace(address) {
+            document.getElementById('destination').value = address;
+            document.getElementById('places-list').style.display = 'none';
+        }
+
+        async function calculateRoute() {
+            let destination = document.getElementById("destination").value;
+            if (!destination) {
+                alert("Please enter the target's location!");
+                return;
+            }
+
+            const directionsButton = document.getElementById('directions-button');
+            const directionsSpinner = document.getElementById('directions-spinner');
+            const distanceElement = document.getElementById('distance');
+            
+            directionsButton.disabled = true;
+            directionsSpinner.style.display = 'inline-block';
+            directionsButton.textContent = 'Loading...';
+
+            try {
+                // Get distance
+                const response = await fetch("/get_distance", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ user_lat: userLat, user_lng: userLng, destination: destination })
+                });
+                
+                const data = await response.json();
+                if (data.distance && distanceElement) {
+                    distanceElement.innerText = `Distance: ${data.distance}`;
+                    distanceElement.style.display = 'block';
+                } else if (distanceElement) {
+                    distanceElement.innerText = "Could not find the distance.";
+                    distanceElement.style.display = 'block';
+                }
+
+                // Get directions
+                const request = {
+                    origin: { lat: userLat, lng: userLng },
+                    destination: destination,
+                    travelMode: google.maps.TravelMode.DRIVING,
+                };
+
+                const result = await new Promise((resolve, reject) => {
+                    directionsService.route(request, (result, status) => {
+                        if (status == google.maps.DirectionsStatus.OK) {
+                            resolve(result);
+                        } else {
+                            reject(new Error("Could not retrieve route."));
+                        }
+                    });
+                });
+
+                directionsRenderer.setDirections(result);
+            } catch (error) {
+                console.error('Error:', error);
+                if (distanceElement) {
+                    distanceElement.innerText = "Error: Could not calculate route.";
+                    distanceElement.style.display = 'block';
+                }
+                alert(error.message || "An error occurred while getting directions.");
+            } finally {
+                directionsButton.disabled = false;
+                directionsSpinner.style.display = 'none';
+                directionsButton.textContent = 'Get Directions';
+            }
+        }
+
+        function getDirections() {
+            calculateRoute();
+        }
+    </script>
+</body>
+</html>
